@@ -5,7 +5,7 @@
 
 # TO RUN (TESTED):
 # `accelerate launch --num_processes=2 --config_file conf/deepspeed-zero3.yaml external/run-trl-sft.py --use_peft`
-# 
+#
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -57,10 +57,6 @@ class ScriptArguments:
         default=1000, metadata={"help": "Number of updates steps before two checkpoint saves"}
     )
     save_total_limit: Optional[int] = field(default=10, metadata={"help": "Limits total number of checkpoints."})
-    push_to_hub: Optional[bool] = field(default=True, metadata={"help": "Push the model to HF Hub"})
-    hub_model_id: Optional[str] = field(
-        default="mistral-7b-finetuned-ultrachat", metadata={"help": "The name of the model on HF Hub"}
-    )
 
 
 parser = HfArgumentParser(ScriptArguments)
@@ -128,8 +124,6 @@ training_args = TrainingArguments(
     report_to=script_args.log_with,
     save_steps=script_args.save_steps,
     save_total_limit=script_args.save_total_limit,
-    push_to_hub=script_args.push_to_hub,
-    hub_model_id=script_args.hub_model_id,
     bf16=True,
     lr_scheduler_type="cosine",
     warmup_ratio=0.1,
