@@ -1,11 +1,11 @@
-#   - Run from root of trl repo with: accelerate launch --config_file=examples/accelerate_configs/deepspeed_zero3.yaml --gradient_accumulation_steps 8 examples/scripts/sft_trainer.py
-# NOTE: from
-# https://gist.github.com/lewtun/b9d46e00292d9ecdd6fd9628d53c2814
-# but it doesn't work exactly, what i changed was: remove device_map,
+# This is rough example of how TRL and DPO can be used together.
+# NOTE: based on:
+# - https://gist.github.com/lewtun/b9d46e00292d9ecdd6fd9628d53c2814
+#
 
 # TO RUN (TESTED):
-# `accelerate launch --num_processes=2 --config_file conf/deepspeed-zero3.yaml external/run-trl-sft.py --use_peft`
-#
+# `accelerate launch --num_processes=2 --config_file conf/deepspeed-zero3.yaml examples/external/run-trl-sft.py --use_peft`
+
 import os
 from dataclasses import dataclass, field
 from typing import Optional
@@ -14,12 +14,13 @@ import torch
 from accelerate import Accelerator
 from datasets import load_dataset
 from peft import LoraConfig
-from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, HfArgumentParser, TrainingArguments
 
-from trl import DPOTrainer, SFTTrainer
+from trl import SFTTrainer
 
-tqdm.pandas()
+debug: bool = os.environ.get("DEBUG", "false").lower() == "true"
+
+accelerator = Accelerator()
 
 
 # Define and parse arguments.
@@ -29,12 +30,11 @@ class ScriptArguments:
     The name of the Casual LM model we wish to fine with SFTTrainer
     """
 
-    # model_name: Optional[str] = field(default="mistralai/Mistral-7B-v0.1", metadata={"help": "the model name"})
-    # model_name: Optional[str] = field(default="adept/fuyu-8b", metadata={"help": "the model name"})
     model_name: Optional[str] = field(default="mistralai/Mistral-7B-Instruct-v0.2", metadata={"help": "the model name"})
+    # models that i have tried but dont work/bugs:
+    # model_name: Optional[str] = field(default="adept/fuyu-8b", metadata={"help": "the model name"})
     dataset_name: Optional[str] = field(default="stingning/ultrachat", metadata={"help": "the dataset name"})
     dataset_text_field: Optional[str] = field(default="text", metadata={"help": "the text field of the dataset"})
-    # log_with: Optional[str] = field(default="wandb", metadata={"help": "use 'wandb' to log with wandb"})
     log_with: Optional[str] = field(default="none", metadata={"help": "use 'wandb' to log with wandb"})
     learning_rate: Optional[float] = field(default=2.0e-5, metadata={"help": "the learning rate"})
     batch_size: Optional[int] = field(default=2, metadata={"help": "the batch size"})
@@ -64,7 +64,6 @@ script_args = parser.parse_args_into_dataclasses()[0]
 
 # Step 1: Load the dataset
 tokenizer = AutoTokenizer.from_pretrained(script_args.model_name)
-# dataset = load_dataset(script_args.dataset_name, split="train[:20000]")
 dataset = load_dataset(script_args.dataset_name, split="train[:500]")
 dataset = dataset.train_test_split(test_size=0.1)
 
@@ -81,7 +80,11 @@ def prepare_dialogue(example):
 
 
 dataset = dataset.map(prepare_dialogue, num_proc=8, remove_columns=["id", "data"])
-accelerator = Accelerator()
+train_dataset = dataset["train"].select(range(10)) if debug else dataset["train"]
+test_dataset = dataset["test"].select(range(10)) if debug else dataset["test"]
+
+# train_dataset = dataset["train"]
+# test_dataset = dataset["test"]
 
 
 # Step 2: Load the model
@@ -91,11 +94,9 @@ elif script_args.load_in_8bit or script_args.load_in_4bit:
     quantization_config = BitsAndBytesConfig(
         load_in_8bit=script_args.load_in_8bit, load_in_4bit=script_args.load_in_4bit
     )
-    # Copy the model to each device
-    # device_map = {"": Accelerator().local_process_index}
-    # device_map = {"": accelerator.local_process_index}
-    # device_map = {"": int(os.environ.get("LOCAL_RANK", -1))}
     torch_dtype = torch.bfloat16
+    # Copy the model to each device
+    # device_map = {"": int(os.environ.get("LOCAL_RANK", -1))} # {"": accelerator.local_process_index}
 else:
     device_map = None
     quantization_config = None
@@ -143,16 +144,13 @@ else:
     peft_config = None
 
 
-train_dataset = dataset["train"]
-test_dataset = dataset["test"]
-
 # Step 5: Define the Trainer
 trainer = SFTTrainer(
     model=model,
     args=training_args,
     max_seq_length=script_args.seq_length,
-    train_dataset=train_dataset,  # dataset["train"],
-    eval_dataset=test_dataset,  # dataset["test"],
+    train_dataset=train_dataset,
+    eval_dataset=test_dataset,
     dataset_text_field=script_args.dataset_text_field,
     peft_config=peft_config,
     packing=True,

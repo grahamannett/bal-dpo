@@ -12,30 +12,28 @@ from examples.external.utils import apply_chat_template, get_datasets
 
 model_name = "unsloth/zephyr-sft-bnb-4bit"
 max_seq_length = 4096  # Choose any! We auto support RoPE Scaling internally!
-dtype = None  # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
+torch_dtype = None  # None for auto detection. Float16 for Tesla T4, V100, Bfloat16 for Ampere+
 load_in_4bit = True  # Use 4bit quantization to reduce memory usage. Can be False.
 debug: bool = os.environ.get("DEBUG", "false").lower() == "true"
+output_dir: str = "output"
 
 model, tokenizer = FastLanguageModel.from_pretrained(
     model_name=model_name,  # Choose ANY! eg mistralai/Mistral-7B-Instruct-v0.2
     max_seq_length=max_seq_length,
-    dtype=dtype,
+    dtype=torch_dtype,
     load_in_4bit=load_in_4bit,
 )
-
 
 raw_datasets = get_datasets(
     {"HuggingFaceH4/ultrafeedback_binarized": 0.005},  # 0.5% sampled
     splits=["train_prefs", "test_prefs"],
 )
 
-column_names = list(raw_datasets["train"].features)
-
 raw_datasets = raw_datasets.map(
     apply_chat_template,
     fn_kwargs={"tokenizer": tokenizer, "task": "dpo"},
     num_proc=12,
-    remove_columns=column_names,
+    remove_columns=list(raw_datasets["train"].features),
     desc="Formatting comparisons with prompt template",
 )
 
@@ -45,11 +43,9 @@ for split in ["train", "test"]:
         {"text_prompt": "prompt", "text_chosen": "chosen", "text_rejected": "rejected"}
     )
 
-
+# trim dataset for debugging/quicker
 train_dataset = raw_datasets["train"].select(range(10)) if debug else raw_datasets["train"]
 train_dataset = raw_datasets["test"].select(range(10)) if debug else raw_datasets["test"]
-
-breakpoint()
 
 model = FastLanguageModel.get_peft_model(
     model,
@@ -72,8 +68,6 @@ model = FastLanguageModel.get_peft_model(
     loftq_config=None,  # And LoftQ
 )
 
-# trim dataset
-
 
 training_args = TrainingArguments(
     per_device_train_batch_size=2,
@@ -88,7 +82,7 @@ training_args = TrainingArguments(
     weight_decay=0.0,
     lr_scheduler_type="linear",
     seed=42,
-    output_dir="outputs",
+    output_dir=output_dir,
 )
 
 dpo_trainer = DPOTrainer(

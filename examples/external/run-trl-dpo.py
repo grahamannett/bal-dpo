@@ -24,7 +24,7 @@ from utils import apply_chat_template, get_datasets
 
 debug: bool = os.environ.get("DEBUG", "false").lower() == "true"
 
-tqdm.pandas()
+accelerator = Accelerator()
 
 
 # Define and parse arguments.
@@ -39,6 +39,8 @@ class ScriptArguments:
     # model_name: Optional[str] = field(default="adept/fuyu-8b", metadata={"help": "the model name"})
     # model_name: Optional[str] = field(default="mistralai/Mistral-7B-Instruct-v0.2", metadata={"help": "the model name"})
     # model_name: Optional[str] = field(default="unsloth/zephyr-sft-bnb-4bit", metadata={"help": "the model name"})
+
+    # remaining args are similar to the sft example
     dataset_name: Optional[str] = field(
         default="HuggingFaceH4/ultrafeedback_binarized", metadata={"help": "the dataset name"}
     )
@@ -68,7 +70,6 @@ class ScriptArguments:
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
 
-accelerator = Accelerator()
 
 # DPO SPECIFIC - Need this tokenizer for DPO
 # need this tokenizer for DPO
@@ -108,8 +109,7 @@ elif script_args.load_in_8bit or script_args.load_in_4bit:
         load_in_8bit=script_args.load_in_8bit, load_in_4bit=script_args.load_in_4bit
     )
     # Copy the model to each device
-    # device_map = {"": accelerator.local_process_index}
-    # device_map = {"": int(os.environ.get("LOCAL_RANK", -1))}
+    # device_map = {"": int(os.environ.get("LOCAL_RANK", -1))} # {"": accelerator.local_process_index}
     torch_dtype = torch.bfloat16
 else:
     device_map = None
@@ -144,7 +144,7 @@ training_args = TrainingArguments(
     logging_steps=script_args.logging_steps,
     num_train_epochs=script_args.num_train_epochs,
     max_steps=script_args.max_steps,
-    report_to="none",
+    report_to=script_args.log_with,
     optim="adamw_8bit",
     save_steps=script_args.save_steps,
     save_total_limit=script_args.save_total_limit,
